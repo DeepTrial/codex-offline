@@ -1,0 +1,531 @@
+name: Download Codex Offline Packages
+
+on:
+  workflow_dispatch:
+    inputs:
+      force_rebuild:
+        description: 'Force rebuild even if version exists'
+        required: false
+        default: 'false'
+      specific_version:
+        description: 'Build specific version (e.g., 0.144.6). Leave empty for latest.'
+        required: false
+        default: ''
+  schedule:
+    - cron: '0 0 * * *'    # Daily
+    - cron: '0 1 * * 1'    # Weekly Monday
+
+env:
+  NODE_VERSION: '22'
+  NPM_REGISTRY: 'https://registry.npmjs.org'
+
+jobs:
+  check-version:
+    runs-on: ubuntu-latest
+    outputs:
+      latest_version: ${{ steps.check.outputs.latest_version }}
+      should_build: ${{ steps.check.outputs.should_build }}
+      release_exists: ${{ steps.check.outputs.release_exists }}
+    steps:
+      - name: Check latest version from npm
+        id: check
+        run: |
+          set -e
+          SPECIFIC_VERSION="${{ github.event.inputs.specific_version }}"
+          FORCE_REBUILD="${{ github.event.inputs.force_rebuild }}"
+
+          if [ -n "$SPECIFIC_VERSION" ]; then
+            echo "=== Building specific version: $SPECIFIC_VERSION ==="
+            LATEST_VERSION="$SPECIFIC_VERSION"
+          else
+            echo "=== Checking latest version from npm ==="
+            NPM_RESPONSE=$(curl -s https://registry.npmjs.org/@openai/codex)
+            LATEST_VERSION=$(echo "$NPM_RESPONSE" | grep -o '"latest":"[^"]*"' | head -1 | cut -d'"' -f4)
+            if [ -z "$LATEST_VERSION" ] || [ "$LATEST_VERSION" = "null" ]; then
+              echo "ERROR: Failed to get version from npm"
+              exit 1
+            fi
+            echo "Latest npm version: $LATEST_VERSION"
+          fi
+
+          echo "latest_version=$LATEST_VERSION" >> $GITHUB_OUTPUT
+
+          echo "=== Checking if release exists ==="
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+            "https://api.github.com/repos/${{ github.repository }}/releases/tags/v${LATEST_VERSION}")
+
+          if [ "$HTTP_CODE" = "200" ]; then
+            echo "Release v${LATEST_VERSION} already exists"
+            echo "release_exists=true" >> $GITHUB_OUTPUT
+            if [ "$FORCE_REBUILD" = "true" ]; then
+              echo "Force rebuild requested"
+              echo "should_build=true" >> $GITHUB_OUTPUT
+            else
+              echo "Skipping build"
+              echo "should_build=false" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "Release v${LATEST_VERSION} does not exist"
+            echo "release_exists=false" >> $GITHUB_OUTPUT
+            echo "should_build=true" >> $GITHUB_OUTPUT
+          fi
+
+  build-linux-package:
+    needs: check-version
+    runs-on: ubuntu-latest
+    if: needs.check-version.outputs.should_build == 'true'
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Download packages
+        run: |
+          set -e
+          TARGET_VERSION="${{ needs.check-version.outputs.latest_version }}"
+          echo "Target version: $TARGET_VERSION"
+
+          mkdir -p codex-offline-packages
+          cd codex-offline-packages
+
+          # Download main package
+          echo "=== Downloading @openai/codex@${TARGET_VERSION} ==="
+          npm pack "@openai/codex@${TARGET_VERSION}" --pack-destination .
+          CLAUDE_TGZ=$(ls -t openai-codex-${TARGET_VERSION}.tgz 2>/dev/null | head -1 || true)
+
+          # Download platform-specific package for native binary
+          echo "=== Downloading platform package: @openai/codex@${TARGET_VERSION}-linux-x64 ==="
+          npm pack "@openai/codex@${TARGET_VERSION}-linux-x64" --pack-destination . || {
+            echo "WARN: Could not pack platform-specific package directly"
+            echo "Will install and extract native binary instead"
+          }
+
+          echo "CLAUDE_VERSION=$TARGET_VERSION" >> $GITHUB_ENV
+          ls -la *.tgz
+
+      - name: Assemble linux package
+        run: |
+          set -e
+          cd "$GITHUB_WORKSPACE/codex-offline-packages"
+          TARGET_VERSION="${{ needs.check-version.outputs.latest_version }}"
+
+          # Create node_modules structure
+          mkdir -p node_modules/.bin
+
+          # Install the full package to get native binary + deps
+          TEMP_DIR=$(mktemp -d)
+          cd "$TEMP_DIR"
+          npm init -y > /dev/null 2>&1
+          npm install "@openai/codex@${TARGET_VERSION}" --registry "${{ env.NPM_REGISTRY }}" 2>&1 || {
+            echo "WARN: npm install failed, trying alternative approach..."
+            # Fallback: manually extract and assemble
+            cd "$GITHUB_WORKSPACE/codex-offline-packages"
+            mkdir -p node_modules/@openai/codex
+            MAIN_TGZ=$(ls -t openai-codex-${TARGET_VERSION}.tgz 2>/dev/null | head -1 || true)
+            [ -n "$MAIN_TGZ" ] && tar -xzf "$MAIN_TGZ" -C node_modules/@openai/codex --strip-components=1
+            TEMP_DIR=""
+          }
+
+          if [ -n "$TEMP_DIR" ] && [ -d "$TEMP_DIR/node_modules/@openai/codex" ]; then
+            cd "$GITHUB_WORKSPACE/codex-offline-packages"
+            echo "Copying installed package..."
+            mkdir -p node_modules/@openai/codex
+            cp -r "$TEMP_DIR/node_modules/@openai/codex/"* node_modules/@openai/codex/
+            rm -rf "$TEMP_DIR"
+          fi
+
+          # Verify native binary
+          BIN="node_modules/@openai/codex/vendor/x86_64-unknown-linux-musl/bin/codex"
+          if [ -f "$BIN" ]; then
+            SIZE=$(stat -c%s "$BIN")
+            echo "Native binary: $SIZE bytes"
+            [ "$SIZE" -gt 104857600 ] || { echo "ERROR: binary too small ($SIZE)"; exit 1; }
+            chmod +x "$BIN"
+            "$BIN" --version || echo "WARN: version check failed"
+          else
+            echo "ERROR: Native binary not found at $BIN"
+            echo "vendor contents:"
+            find node_modules/@openai/codex/vendor -type f 2>/dev/null | head -20
+            exit 1
+          fi
+
+          # Create .bin launcher — real script (not symlink, uses printf for YAML safety)
+          echo "=== Creating .bin/codex launcher ==="
+          cd "$GITHUB_WORKSPACE/codex-offline-packages/node_modules/.bin"
+          rm -f codex
+          printf '%s\n' \
+            '#!/usr/bin/env bash' \
+            '# Codex launcher — execs native binary directly. No Node.js required.' \
+            'SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"' \
+            'exec "$SELF_DIR/../@openai/codex/vendor/x86_64-unknown-linux-musl/bin/codex" "$@"' \
+            > codex
+          chmod +x codex
+          echo "Created launcher script"
+          cd "$GITHUB_WORKSPACE/codex-offline-packages"
+
+      - name: Download skills and jq
+        run: |
+          set -e
+          echo "=== Downloading skills and jq ==="
+          # Install jq for build scripts
+          sudo apt-get update -qq && sudo apt-get install -y -qq jq
+
+          mkdir -p codex-offline-packages/skills/offline-skills
+          bash skills/download-skills.sh codex-offline-packages/skills/offline-skills
+          cp skills/install-skills.sh codex-offline-packages/skills/
+          cp -r skills/lib codex-offline-packages/skills/
+
+          # Copy index files
+          for f in SKILLS-INDEX.md skills-manifest.json; do
+            if [ -f "codex-offline-packages/skills/offline-skills/$f" ]; then
+              cp "codex-offline-packages/skills/offline-skills/$f" codex-offline-packages/skills/
+            fi
+          done
+
+          # Download jq for offline use
+          mkdir -p codex-offline-packages/skills/bin
+          bash skills/download-jq.sh --all codex-offline-packages/skills/bin
+
+          echo "=== Skills downloaded ==="
+          du -sh codex-offline-packages/skills/
+
+      - name: Copy setup files and package info
+        run: |
+          cp setup-codex.sh codex-offline-packages/
+          chmod +x codex-offline-packages/setup-codex.sh
+          [ -f check-update.sh ] && { cp check-update.sh codex-offline-packages/; chmod +x codex-offline-packages/check-update.sh; }
+
+          BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          VER="${{ needs.check-version.outputs.latest_version }}"
+          cat > codex-offline-packages/package-info.json << EOF
+          {
+            "name": "codex-offline-packages",
+            "version": "${VER}",
+            "created_at": "${BUILD_DATE}",
+            "platform": "linux-x64",
+            "source": "https://www.npmjs.com/package/@openai/codex",
+            "github_repo": "${{ github.repository }}",
+            "note": "Native binary — Node.js NOT required"
+          }
+          EOF
+
+          ls -la codex-offline-packages/
+
+      - name: Pack and checksum
+        run: |
+          tar -czf codex-offline-packages-linux.tar.gz codex-offline-packages/
+          sha256sum codex-offline-packages-linux.tar.gz > codex-offline-packages-linux.tar.gz.sha256
+          echo "Package size:"
+          ls -lh codex-offline-packages-linux.tar.gz
+          ls -lh codex-offline-packages-linux.tar.gz.sha256
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: codex-offline-packages-v${{ needs.check-version.outputs.latest_version }}
+          path: |
+            codex-offline-packages-linux.tar.gz
+            codex-offline-packages-linux.tar.gz.sha256
+          retention-days: 30
+
+  build-windows-package:
+    needs: check-version
+    runs-on: windows-latest
+    if: needs.check-version.outputs.should_build == 'true'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Download npm packages
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $ver = "${{ needs.check-version.outputs.latest_version }}"
+          Write-Host "=== Downloading @openai/codex@$ver (win32-x64) ==="
+          New-Item -ItemType Directory -Path work -Force | Out-Null
+          npm pack "@openai/codex@$ver" --pack-destination work
+          npm pack "@openai/codex@$($ver)-win32-x64" --pack-destination work
+          Get-ChildItem work\*.tgz | Select-Object Name, Length
+
+      - name: Assemble windows package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $ver = "${{ needs.check-version.outputs.latest_version }}"
+          $root = "$env:GITHUB_WORKSPACE\codex-offline-packages-windows"
+          $codexDir = "$root\node_modules\@openai\codex"
+          $binDir  = "$root\node_modules\.bin"
+          New-Item -ItemType Directory -Path $codexDir, $binDir -Force | Out-Null
+
+          # Install platform package to get native binary
+          $tmpDir = Join-Path $env:TEMP "codex-tmp-$PID"
+          New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null
+          Set-Location $tmpDir
+          npm init -y | Out-Null
+
+          # Install with win32-x64 dist-tag
+          npm install "@openai/codex@$($ver)-win32-x64" --registry ${{ env.NPM_REGISTRY }} 2>&1
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "npm install failed"
+            exit 1
+          }
+
+          # Copy installed package
+          Copy-Item -Path "$tmpDir\node_modules\@openai\codex\*" -Destination $codexDir -Recurse -Force
+
+          # Verify native binary
+          $exe = "$codexDir\vendor\x86_64-pc-windows-msvc\bin\codex.exe"
+          if (-not (Test-Path $exe)) {
+            Write-Error "codex.exe not found at $exe"
+            Get-ChildItem "$codexDir\vendor" -Recurse | Select-Object FullName, Length
+            exit 1
+          }
+          $size = (Get-Item $exe).Length
+          Write-Host "codex.exe: $size bytes"
+          if ($size -le 50MB) { Write-Error "codex.exe is a stub ($size bytes)"; exit 1 }
+
+          & $exe --version
+          if ($LASTEXITCODE -ne 0) { Write-Error "codex.exe --version failed"; exit 1 }
+
+          # Create batch wrapper (use WriteAllText to avoid YAML+@" confusion)
+          $batch = "@echo off`nREM Codex batch wrapper - calls native binary directly. No Node.js.`n`"$exe`" %*`n"
+          [System.IO.File]::WriteAllText("$binDir\codex.bat", $batch, [System.Text.Encoding]::ASCII)
+          Write-Host "Created batch wrapper: $binDir\codex.bat"
+
+          # Cleanup
+          Remove-Item $tmpDir -Recurse -Force -ErrorAction SilentlyContinue
+          Set-Location $env:GITHUB_WORKSPACE
+
+      - name: Download skills and jq
+        shell: bash
+        run: |
+          set -e
+          echo "=== Downloading skills and jq (windows package) ==="
+          if ! command -v jq >/dev/null 2>&1; then
+            choco install jq -y --no-progress
+          fi
+          mkdir -p codex-offline-packages-windows/skills/offline-skills
+          bash skills/download-skills.sh codex-offline-packages-windows/skills/offline-skills
+          cp skills/install-skills.sh codex-offline-packages-windows/skills/
+          cp -r skills/lib codex-offline-packages-windows/skills/
+          for f in SKILLS-INDEX.md skills-manifest.json; do
+            if [ -f "codex-offline-packages-windows/skills/offline-skills/$f" ]; then
+              cp "codex-offline-packages-windows/skills/offline-skills/$f" codex-offline-packages-windows/skills/
+            fi
+          done
+
+          mkdir -p /tmp/jqdl
+          bash skills/download-jq.sh --all /tmp/jqdl
+          mkdir -p codex-offline-packages-windows/skills/bin/windows-amd64
+          cp /tmp/jqdl/windows-amd64/jq.exe codex-offline-packages-windows/skills/bin/windows-amd64/
+          du -sh codex-offline-packages-windows/skills/
+
+      - name: Copy setup scripts and package info
+        shell: pwsh
+        run: |
+          $root = "$env:GITHUB_WORKSPACE\codex-offline-packages-windows"
+          Copy-Item setup-codex.ps1, setup-codex.bat $root
+          $info = [ordered]@{
+            name = 'codex-offline-packages-windows'
+            version = "${{ needs.check-version.outputs.latest_version }}"
+            created_at = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+            platform = 'win32-x64'
+            source = 'https://www.npmjs.com/package/@openai/codex'
+            github_repo = '${{ github.repository }}'
+            note = 'Native binary — Node.js NOT required'
+          }
+          ($info | ConvertTo-Json) | Out-File -FilePath "$root\package-info.json" -Encoding utf8
+
+      - name: Zip and checksum
+        shell: pwsh
+        run: |
+          Compress-Archive -Path codex-offline-packages-windows -DestinationPath codex-offline-packages-windows.zip -Force
+          $hash = (Get-FileHash codex-offline-packages-windows.zip -Algorithm SHA256).Hash.ToLower()
+          "$hash  codex-offline-packages-windows.zip" | Out-File -FilePath codex-offline-packages-windows.zip.sha256 -Encoding ascii
+          Get-Item codex-offline-packages-windows.zip | Select-Object Name, Length
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: codex-offline-packages-windows-v${{ needs.check-version.outputs.latest_version }}
+          path: |
+            codex-offline-packages-windows.zip
+            codex-offline-packages-windows.zip.sha256
+          retention-days: 30
+
+  test-release-package:
+    needs: [check-version, build-linux-package, build-windows-package]
+    runs-on: ${{ matrix.os }}
+    if: needs.check-version.outputs.should_build == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            part: linux
+          - os: windows-latest
+            part: windows
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Linux test
+      - name: Download linux artifact
+        if: matrix.part == 'linux'
+        uses: actions/download-artifact@v4
+        with:
+          name: codex-offline-packages-v${{ needs.check-version.outputs.latest_version }}
+          path: artifacts
+
+      - name: Extract and test linux package
+        if: matrix.part == 'linux'
+        run: |
+          tar -xzf artifacts/codex-offline-packages-linux.tar.gz -C .
+          chmod +x tests/test-linux-package.sh
+          bash tests/test-linux-package.sh "$GITHUB_WORKSPACE/codex-offline-packages" "${{ needs.check-version.outputs.latest_version }}"
+
+      # Windows test
+      - name: Download windows artifact
+        if: matrix.part == 'windows'
+        uses: actions/download-artifact@v4
+        with:
+          name: codex-offline-packages-windows-v${{ needs.check-version.outputs.latest_version }}
+          path: artifacts
+
+      - name: Extract and test windows package
+        if: matrix.part == 'windows'
+        shell: pwsh
+        run: |
+          Expand-Archive -Path artifacts\codex-offline-packages-windows.zip -DestinationPath . -Force
+          powershell -NoProfile -ExecutionPolicy Bypass -File tests\test-windows-package.ps1 `
+            -PackageDir "$env:GITHUB_WORKSPACE\codex-offline-packages-windows" `
+            -ExpectedVersion "${{ needs.check-version.outputs.latest_version }}"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+  create-release:
+    needs: [check-version, test-release-package]
+    runs-on: ubuntu-latest
+    if: needs.check-version.outputs.should_build == 'true'
+    permissions:
+      contents: write
+    steps:
+      - name: Download linux artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: codex-offline-packages-v${{ needs.check-version.outputs.latest_version }}
+          path: dist
+
+      - name: Download windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: codex-offline-packages-windows-v${{ needs.check-version.outputs.latest_version }}
+          path: dist
+
+      - name: Verify release files
+        run: |
+          ls -lh dist/
+          for f in codex-offline-packages-linux.tar.gz codex-offline-packages-linux.tar.gz.sha256 \
+                   codex-offline-packages-windows.zip codex-offline-packages-windows.zip.sha256; do
+            [ -f "dist/$f" ] || { echo "ERROR: missing dist/$f"; exit 1; }
+          done
+          echo "All release files present"
+
+      - name: Create release body
+        run: |
+          VER="${{ needs.check-version.outputs.latest_version }}"
+          BUILD_DATE=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
+          PKG_SIZE=$(du -sh dist/codex-offline-packages-linux.tar.gz 2>/dev/null | cut -f1 || echo "N/A")
+
+          cat > dist/release_body.md << EOF
+          ## Codex Offline Package v${VER}
+
+          **Version:** ${VER}
+          **Platforms:** Linux x64, Windows x64
+          **Build Date:** ${BUILD_DATE}
+
+          Standalone native binaries — Node.js NOT required.
+
+          ### Downloads
+
+          | File | Platform | Description |
+          |------|----------|-------------|
+          | \`codex-offline-packages-linux.tar.gz\` | Linux x64 / WSL | Full offline package (${PKG_SIZE}) |
+          | \`codex-offline-packages-windows.zip\` | Windows x64 | Native Windows package |
+
+          ### Quick Start (Linux / macOS / WSL)
+
+          \`\`\`bash
+          tar -xzf codex-offline-packages-linux.tar.gz
+          cd codex-offline-packages
+          bash setup-codex.sh --yes
+          \`\`\`
+
+          ### Quick Start (Windows)
+
+          1. Download \`codex-offline-packages-windows.zip\` and extract
+          2. Double-click \`setup-codex.bat\`, or in PowerShell:
+          \`\`\`powershell
+          .\setup-codex.ps1 -NonInteractive
+          \`\`\`
+
+          ### After Install — Required Steps
+
+          Edit \`~/.codex/config.toml\` (Linux) or \`%USERPROFILE%\\.codex\\config.toml\` (Windows):
+
+          \`\`\`toml
+          [api]
+          base_url = "https://your-api-endpoint.com"
+          api_key = "sk-your-api-key"
+          \`\`\`
+
+          ### Verification
+
+          \`\`\`bash
+          sha256sum -c codex-offline-packages-linux.tar.gz.sha256
+          sha256sum -c codex-offline-packages-windows.zip.sha256
+          \`\`\`
+
+          ### What's Inside
+
+          - Codex CLI native binary (standalone, no Node.js)
+          - Offline-compatible skills and plugins
+          - jq binaries for offline JSON processing
+          - One-click setup scripts (bash + PowerShell)
+          EOF
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ needs.check-version.outputs.latest_version }}
+          name: Codex v${{ needs.check-version.outputs.latest_version }}
+          body_path: dist/release_body.md
+          draft: false
+          prerelease: false
+          files: |
+            dist/codex-offline-packages-linux.tar.gz
+            dist/codex-offline-packages-linux.tar.gz.sha256
+            dist/codex-offline-packages-windows.zip
+            dist/codex-offline-packages-windows.zip.sha256
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  notify-no-build:
+    needs: check-version
+    runs-on: ubuntu-latest
+    if: needs.check-version.outputs.should_build == 'false'
+    steps:
+      - name: Skip notification
+        run: |
+          echo "Skipping build — v${{ needs.check-version.outputs.latest_version }} already exists"
+          echo "To force: trigger workflow with force_rebuild=true"

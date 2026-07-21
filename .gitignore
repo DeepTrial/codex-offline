@@ -1,0 +1,9 @@
+# Codex Offline Package
+# Ignore downloaded packages and build artifacts
+claude-offline-packages/
+codex-offline-packages/
+codex-offline-packages-*/
+*.tar.gz
+*.zip
+*.vsix
+*.tgz

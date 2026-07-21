@@ -1,0 +1,14 @@
+# Auto-detect text files, ensure LF line endings
+* text=auto eol=lf
+*.sh text eol=lf
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+*.md text
+*.json text
+*.yml text
+*.yaml text
+*.toml text
+*.tgz binary
+*.tar.gz binary
+*.zip binary
+*.exe binary

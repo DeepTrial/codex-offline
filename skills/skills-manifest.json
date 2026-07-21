@@ -1,0 +1,153 @@
+{
+  "version": "1.0.0",
+  "description": "Codex Offline Skills & Plugins Manifest",
+  "updated_at": "2026-07-21",
+  "skills": {
+    "docx": {
+      "name": "docx",
+      "description": "Word document creation, editing, and conversion",
+      "repo": "anthropics/skills",
+      "path": "skills/docx",
+      "category": "document",
+      "offline_compatible": true,
+      "dependencies": ["pandoc", "LibreOffice"],
+      "files": ["SKILL.md", "REFERENCE.md", "scripts/"]
+    },
+    "pdf": {
+      "name": "pdf",
+      "description": "PDF processing, merge, split, OCR",
+      "repo": "anthropics/skills",
+      "path": "skills/pdf",
+      "category": "document",
+      "offline_compatible": true,
+      "dependencies": ["pypdf"],
+      "files": ["SKILL.md", "REFERENCE.md", "FORMS.md", "scripts/"]
+    },
+    "pptx": {
+      "name": "pptx",
+      "description": "PowerPoint presentation processing",
+      "repo": "anthropics/skills",
+      "path": "skills/pptx",
+      "category": "document",
+      "offline_compatible": true,
+      "dependencies": ["python-pptx"],
+      "files": ["SKILL.md", "editing.md", "pptxgenjs.md", "scripts/"]
+    },
+    "xlsx": {
+      "name": "xlsx",
+      "description": "Excel spreadsheet processing",
+      "repo": "anthropics/skills",
+      "path": "skills/xlsx",
+      "category": "document",
+      "offline_compatible": true,
+      "dependencies": ["openpyxl"],
+      "files": ["SKILL.md", "scripts/"]
+    },
+    "frontend-design": {
+      "name": "frontend-design",
+      "description": "High-quality frontend interface design guidance",
+      "repo": "anthropics/skills",
+      "path": "skills/frontend-design",
+      "category": "design",
+      "offline_compatible": true,
+      "files": ["SKILL.md"]
+    },
+    "algorithmic-art": {
+      "name": "algorithmic-art",
+      "description": "Algorithmic art generation",
+      "repo": "anthropics/skills",
+      "path": "skills/algorithmic-art",
+      "category": "design",
+      "offline_compatible": true,
+      "files": ["SKILL.md"]
+    },
+    "canvas-design": {
+      "name": "canvas-design",
+      "description": "Canvas graphics design",
+      "repo": "anthropics/skills",
+      "path": "skills/canvas-design",
+      "category": "design",
+      "offline_compatible": true,
+      "files": ["SKILL.md"]
+    },
+    "theme-factory": {
+      "name": "theme-factory",
+      "description": "Theme generation",
+      "repo": "anthropics/skills",
+      "path": "skills/theme-factory",
+      "category": "design",
+      "offline_compatible": true,
+      "files": ["SKILL.md"]
+    },
+    "web-artifacts-builder": {
+      "name": "web-artifacts-builder",
+      "description": "Web artifacts building",
+      "repo": "anthropics/skills",
+      "path": "skills/web-artifacts-builder",
+      "category": "design",
+      "offline_compatible": true,
+      "files": ["SKILL.md", "scripts/"]
+    },
+    "webapp-testing": {
+      "name": "webapp-testing",
+      "description": "Local web application testing with Playwright",
+      "repo": "anthropics/skills",
+      "path": "skills/webapp-testing",
+      "category": "testing",
+      "offline_compatible": true,
+      "dependencies": ["playwright"],
+      "files": ["SKILL.md", "scripts/"]
+    },
+    "skill-creator": {
+      "name": "skill-creator",
+      "description": "Guide for creating custom skills",
+      "repo": "anthropics/skills",
+      "path": "skills/skill-creator",
+      "category": "tool",
+      "offline_compatible": true,
+      "files": ["SKILL.md", "scripts/"]
+    },
+    "brand-guidelines": {
+      "name": "brand-guidelines",
+      "description": "Brand guidelines application",
+      "repo": "anthropics/skills",
+      "path": "skills/brand-guidelines",
+      "category": "enterprise",
+      "offline_compatible": true,
+      "files": ["SKILL.md"]
+    },
+    "internal-comms": {
+      "name": "internal-comms",
+      "description": "Internal communications",
+      "repo": "anthropics/skills",
+      "path": "skills/internal-comms",
+      "category": "enterprise",
+      "offline_compatible": true,
+      "files": ["SKILL.md"]
+    },
+    "doc-coauthoring": {
+      "name": "doc-coauthoring",
+      "description": "Document coauthoring",
+      "repo": "anthropics/skills",
+      "path": "skills/doc-coauthoring",
+      "category": "enterprise",
+      "offline_compatible": true,
+      "files": ["SKILL.md"]
+    },
+    "superpowers": {
+      "name": "superpowers",
+      "description": "Agentic skills framework: TDD, debugging, brainstorming, planning, code review",
+      "repo": "obra/superpowers",
+      "path": "",
+      "category": "plugin",
+      "type": "plugin",
+      "offline_compatible": true,
+      "files": ["skills/", "agents/", "commands/", "hooks/", "scripts/", "CLAUDE.md", "AGENTS.md", "package.json", ".claude-plugin/"]
+    }
+  },
+  "excluded": {
+    "context7": { "reason": "Requires internet access for documentation fetching" },
+    "claude-api": { "reason": "Claude API specific, not applicable to Codex" },
+    "mcp-builder": { "reason": "Requires external API access" }
+  }
+}
