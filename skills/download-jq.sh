@@ -76,7 +76,9 @@ download_jq_platform() {
         return 1
     fi
     chmod +x "$dest_path"
-    log_ok "Downloaded jq for ${platform} (${file_size "$dest_path"} bytes)"
+    local fsize
+    fsize=$(file_size "$dest_path")
+    log_ok "Downloaded jq for ${platform} (${fsize} bytes)"
 }
 
 # Detect current platform for default single-platform download
