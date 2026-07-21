@@ -7,3 +7,18 @@ codex-offline-packages-*/
 *.zip
 *.vsix
 *.tgz
+*.sha256
+
+# Claude/Codex IDE config
+.claude/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
