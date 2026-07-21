@@ -43,8 +43,8 @@ Info 'Checking package structure...'
 $exe = Join-Path $PackageDir 'node_modules\@openai\codex\vendor\x86_64-pc-windows-msvc\bin\codex.exe'
 if (-not (Test-Path $exe)) { Fail 'codex.exe missing' }
 $size = (Get-Item $exe).Length
-if ($size -le 50MB) { Fail "codex.exe is only ${size} bytes (<= 50MB) — looks like a stub" }
-Ok "codex.exe is real (${size} bytes)"
+if ($size -le 50MB) { Fail "codex.exe is only ${size} bytes, too small - looks like a stub" }
+Ok "codex.exe is real, ${size} bytes"
 
 $ps1 = Join-Path $PackageDir 'setup-codex.ps1'
 $bat = Join-Path $PackageDir 'setup-codex.bat'
