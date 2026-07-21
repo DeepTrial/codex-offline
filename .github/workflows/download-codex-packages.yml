@@ -94,13 +94,12 @@ jobs:
           mkdir -p codex-offline-packages
           cd codex-offline-packages
 
-          # Download main package
+          # Download main package (small stub with bin/codex.js launcher)
           echo "=== Downloading @openai/codex@${TARGET_VERSION} ==="
           npm pack "@openai/codex@${TARGET_VERSION}" --pack-destination .
-          CLAUDE_TGZ=$(ls -t openai-codex-${TARGET_VERSION}.tgz 2>/dev/null | head -1 || true)
 
-          # Download platform-specific package for native binary
-          echo "=== Downloading platform package: @openai/codex@${TARGET_VERSION}-linux-x64 ==="
+          # Download platform-specific package with native binary
+          echo "=== Downloading @openai/codex@${TARGET_VERSION}-linux-x64 ==="
           npm pack "@openai/codex@${TARGET_VERSION}-linux-x64" --pack-destination . || {
             echo "WARN: Could not pack platform-specific package directly"
             echo "Will install and extract native binary instead"
@@ -117,25 +116,32 @@ jobs:
 
           # Create node_modules structure
           mkdir -p node_modules/.bin
+          mkdir -p node_modules/@openai/codex
 
-          # Install the full package to get native binary + deps
-          TEMP_DIR=$(mktemp -d)
-          cd "$TEMP_DIR"
-          npm init -y > /dev/null 2>&1
-          npm install "@openai/codex@${TARGET_VERSION}" --registry "${{ env.NPM_REGISTRY }}" 2>&1 || {
-            echo "WARN: npm install failed, trying alternative approach..."
-            # Fallback: manually extract and assemble
-            cd "$GITHUB_WORKSPACE/codex-offline-packages"
-            mkdir -p node_modules/@openai/codex
-            MAIN_TGZ=$(ls -t openai-codex-${TARGET_VERSION}.tgz 2>/dev/null | head -1 || true)
-            [ -n "$MAIN_TGZ" ] && tar -xzf "$MAIN_TGZ" -C node_modules/@openai/codex --strip-components=1
-            TEMP_DIR=""
-          }
+          # Extract main package (stub with bin/codex.js)
+          MAIN_TGZ=$(ls -t openai-codex-${TARGET_VERSION}.tgz 2>/dev/null | head -1 || true)
+          if [ -n "$MAIN_TGZ" ]; then
+            echo "Extracting main package: $MAIN_TGZ"
+            tar -xzf "$MAIN_TGZ" -C node_modules/@openai/codex --strip-components=1
+          fi
 
-          if [ -n "$TEMP_DIR" ] && [ -d "$TEMP_DIR/node_modules/@openai/codex" ]; then
+          # Extract platform-specific package (contains native binary in vendor/)
+          PLATFORM_TGZ=$(ls -t openai-codex-${TARGET_VERSION}-linux-x64.tgz 2>/dev/null | head -1 || true)
+          if [ -n "$PLATFORM_TGZ" ]; then
+            echo "Extracting platform package: $PLATFORM_TGZ"
+            # Platform package has vendor/ at top level, merge into existing dir
+            tar -xzf "$PLATFORM_TGZ" --strip-components=1 -C node_modules/@openai/codex
+          else
+            # Fallback: npm install both packages to get the full tree
+            echo "WARN: No platform tgz found, falling back to npm install..."
+            TEMP_DIR=$(mktemp -d)
+            cd "$TEMP_DIR"
+            npm init -y > /dev/null 2>&1
+            npm install "@openai/codex@${TARGET_VERSION}" "@openai/codex@${TARGET_VERSION}-linux-x64" --registry "${{ env.NPM_REGISTRY }}" 2>&1 || {
+              echo "ERROR: npm install with platform package failed"
+              exit 1
+            }
             cd "$GITHUB_WORKSPACE/codex-offline-packages"
-            echo "Copying installed package..."
-            mkdir -p node_modules/@openai/codex
             cp -r "$TEMP_DIR/node_modules/@openai/codex/"* node_modules/@openai/codex/
             rm -rf "$TEMP_DIR"
           fi
@@ -152,6 +158,8 @@ jobs:
             echo "ERROR: Native binary not found at $BIN"
             echo "vendor contents:"
             find node_modules/@openai/codex/vendor -type f 2>/dev/null | head -20
+            echo "package root contents:"
+            ls -la node_modules/@openai/codex/
             exit 1
           fi
 
@@ -252,9 +260,10 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $ver = "${{ needs.check-version.outputs.latest_version }}"
-          Write-Host "=== Downloading @openai/codex@$ver (win32-x64) ==="
+          Write-Host "=== Downloading @openai/codex@$ver (main stub) ==="
           New-Item -ItemType Directory -Path work -Force | Out-Null
           npm pack "@openai/codex@$ver" --pack-destination work
+          Write-Host "=== Downloading @openai/codex@$($ver)-win32-x64 (native binary) ==="
           npm pack "@openai/codex@$($ver)-win32-x64" --pack-destination work
           Get-ChildItem work\*.tgz | Select-Object Name, Length
 
@@ -268,21 +277,41 @@ jobs:
           $binDir  = "$root\node_modules\.bin"
           New-Item -ItemType Directory -Path $codexDir, $binDir -Force | Out-Null
 
-          # Install platform package to get native binary
-          $tmpDir = Join-Path $env:TEMP "codex-tmp-$PID"
-          New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null
-          Set-Location $tmpDir
-          npm init -y | Out-Null
-
-          # Install with win32-x64 dist-tag
-          npm install "@openai/codex@$($ver)-win32-x64" --registry ${{ env.NPM_REGISTRY }} 2>&1
-          if ($LASTEXITCODE -ne 0) {
-            Write-Error "npm install failed"
-            exit 1
+          # Extract main stub package
+          $mainTgz = Get-ChildItem work\openai-codex-$ver.tgz | Select-Object -First 1
+          if ($mainTgz) {
+            Write-Host "Extracting main package: $($mainTgz.Name)"
+            # Extract to temp then copy
+            $tmpExtract = Join-Path $env:TEMP "codex-extract-$PID"
+            New-Item -ItemType Directory -Path $tmpExtract -Force | Out-Null
+            tar -xzf $mainTgz.FullName -C $tmpExtract
+            Copy-Item -Path "$tmpExtract\package\*" -Destination $codexDir -Recurse -Force
+            Remove-Item $tmpExtract -Recurse -Force -ErrorAction SilentlyContinue
           }
 
-          # Copy installed package
-          Copy-Item -Path "$tmpDir\node_modules\@openai\codex\*" -Destination $codexDir -Recurse -Force
+          # Extract platform-specific package with native binary
+          $platTgz = Get-ChildItem work\openai-codex-$ver-win32-x64.tgz | Select-Object -First 1
+          if ($platTgz) {
+            Write-Host "Extracting platform package: $($platTgz.Name)"
+            $tmpExtract = Join-Path $env:TEMP "codex-plat-extract-$PID"
+            New-Item -ItemType Directory -Path $tmpExtract -Force | Out-Null
+            tar -xzf $platTgz.FullName -C $tmpExtract
+            # Platform package has vendor/ and other dirs at package/ level, merge
+            Copy-Item -Path "$tmpExtract\package\*" -Destination $codexDir -Recurse -Force
+            Remove-Item $tmpExtract -Recurse -Force -ErrorAction SilentlyContinue
+          } else {
+            # Fallback: npm install both packages
+            Write-Host "WARN: No platform tgz found, falling back to npm install..."
+            $tmpDir = Join-Path $env:TEMP "codex-tmp-$PID"
+            New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null
+            Set-Location $tmpDir
+            npm init -y | Out-Null
+            npm install "@openai/codex@$ver" "@openai/codex@$($ver)-win32-x64" --registry ${{ env.NPM_REGISTRY }} 2>&1
+            if ($LASTEXITCODE -ne 0) { Write-Error "npm install failed"; exit 1 }
+            Copy-Item -Path "$tmpDir\node_modules\@openai\codex\*" -Destination $codexDir -Recurse -Force
+            Remove-Item $tmpDir -Recurse -Force -ErrorAction SilentlyContinue
+            Set-Location $env:GITHUB_WORKSPACE
+          }
 
           # Verify native binary
           $exe = "$codexDir\vendor\x86_64-pc-windows-msvc\bin\codex.exe"
@@ -302,10 +331,6 @@ jobs:
           $batch = "@echo off`nREM Codex batch wrapper - calls native binary directly. No Node.js.`n`"$exe`" %*`n"
           [System.IO.File]::WriteAllText("$binDir\codex.bat", $batch, [System.Text.Encoding]::ASCII)
           Write-Host "Created batch wrapper: $binDir\codex.bat"
-
-          # Cleanup
-          Remove-Item $tmpDir -Recurse -Force -ErrorAction SilentlyContinue
-          Set-Location $env:GITHUB_WORKSPACE
 
       - name: Download skills and jq
         shell: bash
