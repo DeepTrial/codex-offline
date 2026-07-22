@@ -471,24 +471,40 @@ jobs:
         run: |
           VER="${{ needs.check-version.outputs.latest_version }}"
 
-          # Find previous release tag from GitHub API (no checkout needed)
+          # Find previous release tag from GitHub API
           PREV_TAG=$(gh release list --repo ${{ github.repository }} --limit 50 --json tagName --jq '.[].tagName' | grep -v "^v${VER}$" | head -1 || true)
+          PREV_VER="${PREV_TAG#v}"
 
           echo "Current version: v${VER}"
           echo "Previous tag: ${PREV_TAG:-none}"
 
+          # Fetch upstream gitHead for both versions from npm
+          CUR_HEAD=$(curl -s "https://registry.npmjs.org/@openai/codex/${VER}" 2>/dev/null | jq -r '.gitHead // empty' 2>/dev/null || true)
+          PREV_HEAD=""
+          if [ -n "$PREV_VER" ]; then
+            PREV_HEAD=$(curl -s "https://registry.npmjs.org/@openai/codex/${PREV_VER}" 2>/dev/null | jq -r '.gitHead // empty' 2>/dev/null || true)
+          fi
+
+          echo "Current upstream commit: ${CUR_HEAD:-none}"
+          echo "Previous upstream commit: ${PREV_HEAD:-none}"
+
           # Build changelog section
           CHANGELOG=""
-          if [ -n "$PREV_TAG" ]; then
-            PREV_VER="${PREV_TAG#v}"
+          if [ -n "$PREV_VER" ]; then
             CHANGELOG="### 📋 Changelog (v${PREV_VER} → v${VER})\n\n"
-            CHANGELOG+="**Upstream:** [@openai/codex](https://www.npmjs.com/package/@openai/codex) v${PREV_VER} → v${VER}\n\n"
-            CHANGELOG+="**Packaging changes:** See [commit history](https://github.com/${{ github.repository }}/commits/main) for details.\n\n"
 
-            # Try to fetch upstream changelog from npm
-            UPSTREAM_NOTES=$(curl -s "https://registry.npmjs.org/@openai/codex/${VER}" 2>/dev/null | jq -r '.gitHead // empty' 2>/dev/null || true)
-            if [ -n "$UPSTREAM_NOTES" ]; then
-              CHANGELOG+="**Upstream commit:** [${UPSTREAM_NOTES:0:7}](https://github.com/openai/codex/commit/${UPSTREAM_NOTES})\n\n"
+            # Fetch commit diff from openai/codex between the two gitHeads
+            if [ -n "$CUR_HEAD" ] && [ -n "$PREV_HEAD" ]; then
+              COMMITS=$(curl -s "https://api.github.com/repos/openai/codex/compare/${PREV_HEAD}...${CUR_HEAD}" 2>/dev/null | jq -r '.commits[] | "- \(.commit.message | split("\n")[0]) ([\(.sha[0:7])](https://github.com/openai/codex/commit/\(.sha)))"' 2>/dev/null | head -50 || true)
+              TOTAL=$(curl -s "https://api.github.com/repos/openai/codex/compare/${PREV_HEAD}...${CUR_HEAD}" 2>/dev/null | jq -r '.total_commits // "0"' 2>/dev/null || echo "0")
+
+              if [ -n "$COMMITS" ]; then
+                CHANGELOG+="**Upstream changes** (@openai/codex, ${TOTAL} commits):**\n\n${COMMITS}\n\n"
+              else
+                CHANGELOG+="**Upstream:** [Compare v${PREV_VER}...v${VER}](https://github.com/openai/codex/compare/${PREV_HEAD:0:7}...${CUR_HEAD:0:7})\n\n"
+              fi
+            else
+              CHANGELOG+="**Upstream:** [@openai/codex](https://www.npmjs.com/package/@openai/codex) v${PREV_VER} → v${VER}\n\n"
             fi
           else
             CHANGELOG="### 📋 Changelog\n\nInitial release v${VER}.\n\n"
