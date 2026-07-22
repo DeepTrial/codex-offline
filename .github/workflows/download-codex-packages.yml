@@ -481,25 +481,21 @@ jobs:
           # Build changelog section
           CHANGELOG=""
           if [ -n "$PREV_VER" ]; then
-            CHANGELOG="### 📋 Changelog (v${PREV_VER} → v${VER})\n\n"
+            CHANGELOG="### 📋 What's New in Codex v${VER}\n\n"
 
-            # Compare upstream codex versions via GitHub compare API
-            # Tags in openai/codex are prefixed with "rust-v"
-            COMPARE_URL="https://github.com/openai/codex/compare/rust-v${PREV_VER}...rust-v${VER}"
-            COMPARE_JSON=$(curl -s "https://api.github.com/repos/openai/codex/compare/rust-v${PREV_VER}...rust-v${VER}" 2>/dev/null || echo '{}')
-            TOTAL=$(echo "$COMPARE_JSON" | jq -r '.total_commits // 0' 2>/dev/null || echo "0")
+            # Fetch upstream release notes from openai/codex (public API, no token needed)
+            # Tags are prefixed with "rust-v"
+            UPSTREAM_BODY=$(curl -s "https://api.github.com/repos/openai/codex/releases/tags/rust-v${VER}" 2>/dev/null | jq -r '.body // empty' 2>/dev/null || true)
 
-            # Extract commit messages (first line only), limit to 30
-            COMMITS=$(echo "$COMPARE_JSON" | jq -r '.commits[] | "- \(.commit.message | split("\n")[0])"' 2>/dev/null | head -30 || true)
-
-            if [ -n "$COMMITS" ]; then
-              if [ "$TOTAL" -gt 30 ]; then
-                CHANGELOG+="**Upstream changes** (@openai/codex, showing 30 of ${TOTAL} commits):\n\n${COMMITS}\n\n[→ View full comparison](${COMPARE_URL})\n\n"
-              else
-                CHANGELOG+="**Upstream changes** (@openai/codex, ${TOTAL} commits):\n\n${COMMITS}\n\n[→ View full comparison](${COMPARE_URL})\n\n"
-              fi
+            if [ -n "$UPSTREAM_BODY" ]; then
+              # Trim the trailing "Changelog" section with raw commit list (too noisy)
+              UPSTREAM_BODY=$(echo "$UPSTREAM_BODY" | sed '/^## Changelog$/,$d' | sed '/^## Changelog$/q')
+              # Also trim the "Full Changelog" link line
+              UPSTREAM_BODY=$(echo "$UPSTREAM_BODY" | sed '/^Full Changelog:/d')
+              CHANGELOG+="${UPSTREAM_BODY}\n\n"
+              CHANGELOG+="[→ Full upstream changelog](https://github.com/openai/codex/releases/tag/rust-v${VER})\n\n"
             else
-              CHANGELOG+="**Upstream:** [@openai/codex](https://www.npmjs.com/package/@openai/codex) v${PREV_VER} → v${VER}\n\n[→ View comparison](${COMPARE_URL})\n\n"
+              CHANGELOG+="See [@openai/codex v${VER}](https://github.com/openai/codex/releases/tag/rust-v${VER}) for release notes.\n\n"
             fi
           else
             CHANGELOG="### 📋 Changelog\n\nInitial release v${VER}.\n\n"
