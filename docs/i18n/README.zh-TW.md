@@ -5,6 +5,7 @@
 [![GitHub Actions](https://img.shields.io/badge/GitHub%20Actions-Enabled-blue)](.github/workflows/download-codex-packages.yml)
 [![Version](https://img.shields.io/badge/version-1.0-green)](setup-codex.sh)
 [![License](https://img.shields.io/badge/license-MIT-yellow)](LICENSE)
+[![Claude Code Offline](https://img.shields.io/badge/sister%20project-Claude%20Code%20Offline-blueviolet)](https://github.com/DeepTrial/claude-code-offline)
 
 自動化 Codex CLI 離線部署：每日從 npm 拉取最新 Codex，建置 **Linux 與 Windows 離線套件**，執行**自動化安裝測試**，然後發布至 GitHub Releases。
 

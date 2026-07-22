@@ -5,6 +5,7 @@
 [![GitHub Actions](https://img.shields.io/badge/GitHub%20Actions-Enabled-blue)](.github/workflows/download-codex-packages.yml)
 [![Version](https://img.shields.io/badge/version-1.0-green)](setup-codex.sh)
 [![License](https://img.shields.io/badge/license-MIT-yellow)](LICENSE)
+[![Claude Code Offline](https://img.shields.io/badge/sister%20project-Claude%20Code%20Offline-blueviolet)](https://github.com/DeepTrial/claude-code-offline)
 
 Автоматизированное автономное развёртывание Codex CLI: ежедневно извлекает последнюю версию Codex из npm, собирает **автономные пакеты для Linux и Windows**, запускает **автоматизированные тесты установки**, затем публикует в GitHub Releases.
 

@@ -5,6 +5,7 @@
 [![GitHub Actions](https://img.shields.io/badge/GitHub%20Actions-Enabled-blue)](.github/workflows/download-codex-packages.yml)
 [![Version](https://img.shields.io/badge/version-1.0-green)](setup-codex.sh)
 [![License](https://img.shields.io/badge/license-MIT-yellow)](LICENSE)
+[![Claude Code Offline](https://img.shields.io/badge/sister%20project-Claude%20Code%20Offline-blueviolet)](https://github.com/DeepTrial/claude-code-offline)
 
 Codex CLI の自動オフラインデプロイ：npm から最新の Codex を毎日取得し、**Linux・Windows オフラインパッケージ**をビルドし、**自動インストールテスト**を実行した後、GitHub Releases に公開します。
 

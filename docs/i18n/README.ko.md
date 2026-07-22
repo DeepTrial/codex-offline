@@ -5,6 +5,7 @@
 [![GitHub Actions](https://img.shields.io/badge/GitHub%20Actions-Enabled-blue)](.github/workflows/download-codex-packages.yml)
 [![Version](https://img.shields.io/badge/version-1.0-green)](setup-codex.sh)
 [![License](https://img.shields.io/badge/license-MIT-yellow)](LICENSE)
+[![Claude Code Offline](https://img.shields.io/badge/sister%20project-Claude%20Code%20Offline-blueviolet)](https://github.com/DeepTrial/claude-code-offline)
 
 자동화된 Codex CLI 오프라인 배포: 매일 npm에서 최신 Codex를 가져와 **Linux 및 Windows 오프라인 패키지**를 빌드하고, **자동 설치 테스트**를 실행한 후 GitHub Releases에 게시합니다.
 
