@@ -1,3 +1,5 @@
+[English](./README.en.md) | **中文**
+
 # Codex 离线部署方案
 
 [![GitHub Actions](https://img.shields.io/badge/GitHub%20Actions-Enabled-blue)](.github/workflows/download-codex-packages.yml)

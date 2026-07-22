@@ -466,11 +466,58 @@ jobs:
           done
           echo "All release files present"
 
+      - name: Checkout for changelog
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          VER="${{ needs.check-version.outputs.latest_version }}"
+
+          # Find previous release tag
+          PREV_TAG=$(git tag --sort=-version:refname | grep -v "^v${VER}$" | head -1 || true)
+
+          echo "Current version: v${VER}"
+          echo "Previous tag: ${PREV_TAG:-none}"
+
+          # Build changelog section
+          CHANGELOG=""
+          if [ -n "$PREV_TAG" ]; then
+            PREV_VER="${PREV_TAG#v}"
+            CHANGELOG="### 📋 Changelog (v${PREV_VER} → v${VER})\n\n"
+            CHANGELOG+="**Upstream:** [@openai/codex](https://www.npmjs.com/package/@openai/codex) v${PREV_VER} → v${VER}\n\n"
+
+            # Git log between tags (packaging script changes)
+            GIT_LOG=$(git log --pretty=format:"- %s (%h)" "${PREV_TAG}..HEAD" 2>/dev/null | head -30 || true)
+            if [ -n "$GIT_LOG" ]; then
+              CHANGELOG+="**Packaging changes:**\n\n${GIT_LOG}\n\n"
+            else
+              CHANGELOG+="**Packaging changes:** No script changes since v${PREV_VER}.\n\n"
+            fi
+
+            # Try to fetch upstream changelog from npm
+            UPSTREAM_NOTES=$(curl -s "https://registry.npmjs.org/@openai/codex/${VER}" 2>/dev/null | jq -r '.gitHead // empty' 2>/dev/null || true)
+            if [ -n "$UPSTREAM_NOTES" ]; then
+              CHANGELOG+="**Upstream commit:** [${UPSTREAM_NOTES:0:7}](https://github.com/openai/codex/commit/${UPSTREAM_NOTES})\n\n"
+            fi
+          else
+            CHANGELOG="### 📋 Changelog\n\nInitial release v${VER}.\n\n"
+          fi
+
+          # Save changelog to file, preserving newlines
+          printf '%b' "$CHANGELOG" > dist/changelog.md
+          echo "Changelog generated:"
+          cat dist/changelog.md
+
       - name: Create release body
         run: |
           VER="${{ needs.check-version.outputs.latest_version }}"
           BUILD_DATE=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
           PKG_SIZE=$(du -sh dist/codex-offline-packages-linux.tar.gz 2>/dev/null | cut -f1 || echo "N/A")
+
+          CHANGELOG=$(cat dist/changelog.md)
 
           cat > dist/release_body.md << EOF
           ## Codex Offline Package v${VER}
@@ -480,6 +527,8 @@ jobs:
           **Build Date:** ${BUILD_DATE}
 
           Standalone native binaries — Node.js NOT required.
+
+          ${CHANGELOG}
 
           ### Downloads
 
