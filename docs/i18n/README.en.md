@@ -3,7 +3,7 @@
 # Codex Offline Deployment
 
 [![GitHub Actions](https://img.shields.io/badge/GitHub%20Actions-Enabled-blue)](.github/workflows/download-codex-packages.yml)
-[![Version](https://img.shields.io/badge/version-1.0-green)](setup-codex.sh)
+[![Version](https://img.shields.io/npm/v/@openai/codex?label=version&color=green)](https://www.npmjs.com/package/@openai/codex)
 [![License](https://img.shields.io/badge/license-MIT-yellow)](LICENSE)
 [![Claude Code Offline](https://img.shields.io/badge/sister%20project-Claude%20Code%20Offline-blueviolet)](https://github.com/DeepTrial/claude-code-offline)
 
