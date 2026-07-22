@@ -1,4 +1,4 @@
-[English](./README.en.md) | **中文**
+简体中文 | [English](./docs/i18n/README.en.md) | [繁體中文](./docs/i18n/README.zh-TW.md) | [Русский](./docs/i18n/README.ru.md) | [日本語](./docs/i18n/README.ja.md) | [한국어](./docs/i18n/README.ko.md)
 
 # Codex 离线部署方案
 
