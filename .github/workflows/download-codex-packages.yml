@@ -478,33 +478,28 @@ jobs:
           echo "Current version: v${VER}"
           echo "Previous tag: ${PREV_TAG:-none}"
 
-          # Fetch upstream gitHead for both versions from npm
-          CUR_HEAD=$(curl -s "https://registry.npmjs.org/@openai/codex/${VER}" 2>/dev/null | jq -r '.gitHead // empty' 2>/dev/null || true)
-          PREV_HEAD=""
-          if [ -n "$PREV_VER" ]; then
-            PREV_HEAD=$(curl -s "https://registry.npmjs.org/@openai/codex/${PREV_VER}" 2>/dev/null | jq -r '.gitHead // empty' 2>/dev/null || true)
-          fi
-
-          echo "Current upstream commit: ${CUR_HEAD:-none}"
-          echo "Previous upstream commit: ${PREV_HEAD:-none}"
-
           # Build changelog section
           CHANGELOG=""
           if [ -n "$PREV_VER" ]; then
             CHANGELOG="### 📋 Changelog (v${PREV_VER} → v${VER})\n\n"
 
-            # Fetch commit diff from openai/codex between the two gitHeads
-            if [ -n "$CUR_HEAD" ] && [ -n "$PREV_HEAD" ]; then
-              COMMITS=$(curl -s "https://api.github.com/repos/openai/codex/compare/${PREV_HEAD}...${CUR_HEAD}" 2>/dev/null | jq -r '.commits[] | "- \(.commit.message | split("\n")[0]) ([\(.sha[0:7])](https://github.com/openai/codex/commit/\(.sha)))"' 2>/dev/null | head -50 || true)
-              TOTAL=$(curl -s "https://api.github.com/repos/openai/codex/compare/${PREV_HEAD}...${CUR_HEAD}" 2>/dev/null | jq -r '.total_commits // "0"' 2>/dev/null || echo "0")
+            # Compare upstream codex versions via GitHub compare API
+            # Tags in openai/codex are prefixed with "rust-v"
+            COMPARE_URL="https://github.com/openai/codex/compare/rust-v${PREV_VER}...rust-v${VER}"
+            COMPARE_JSON=$(curl -s "https://api.github.com/repos/openai/codex/compare/rust-v${PREV_VER}...rust-v${VER}" 2>/dev/null || echo '{}')
+            TOTAL=$(echo "$COMPARE_JSON" | jq -r '.total_commits // 0' 2>/dev/null || echo "0")
 
-              if [ -n "$COMMITS" ]; then
-                CHANGELOG+="**Upstream changes** (@openai/codex, ${TOTAL} commits):**\n\n${COMMITS}\n\n"
+            # Extract commit messages (first line only), limit to 30
+            COMMITS=$(echo "$COMPARE_JSON" | jq -r '.commits[] | "- \(.commit.message | split("\n")[0])"' 2>/dev/null | head -30 || true)
+
+            if [ -n "$COMMITS" ]; then
+              if [ "$TOTAL" -gt 30 ]; then
+                CHANGELOG+="**Upstream changes** (@openai/codex, showing 30 of ${TOTAL} commits):\n\n${COMMITS}\n\n[→ View full comparison](${COMPARE_URL})\n\n"
               else
-                CHANGELOG+="**Upstream:** [Compare v${PREV_VER}...v${VER}](https://github.com/openai/codex/compare/${PREV_HEAD:0:7}...${CUR_HEAD:0:7})\n\n"
+                CHANGELOG+="**Upstream changes** (@openai/codex, ${TOTAL} commits):\n\n${COMMITS}\n\n[→ View full comparison](${COMPARE_URL})\n\n"
               fi
             else
-              CHANGELOG+="**Upstream:** [@openai/codex](https://www.npmjs.com/package/@openai/codex) v${PREV_VER} → v${VER}\n\n"
+              CHANGELOG+="**Upstream:** [@openai/codex](https://www.npmjs.com/package/@openai/codex) v${PREV_VER} → v${VER}\n\n[→ View comparison](${COMPARE_URL})\n\n"
             fi
           else
             CHANGELOG="### 📋 Changelog\n\nInitial release v${VER}.\n\n"
