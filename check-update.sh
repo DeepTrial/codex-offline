@@ -51,21 +51,75 @@ get_github_version() {
     echo "$response" | (command -v jq >/dev/null 2>&1 && jq -r '.tag_name // empty' | sed 's/^v//' || grep -o '"tag_name":"[^"]*"' | head -1 | cut -d'"' -f4 | sed 's/^v//')
 }
 
+compare_versions() {
+    # Compare two semantic version strings.
+    # Returns: 0 if equal, 1 if v1 > v2, 2 if v1 < v2
+    local v1="$1"
+    local v2="$2"
+
+    if [ "$v1" = "$v2" ]; then
+        return 0
+    fi
+
+    # Use sort -V for version comparison (GNU coreutils)
+    local higher
+    higher=$(printf "%s\n%s" "$v1" "$v2" | sort -V | tail -1)
+
+    if [ "$higher" = "$v1" ]; then
+        return 1  # v1 > v2
+    else
+        return 2  # v1 < v2
+    fi
+}
+
 download_latest() {
     local version="$1"
     local asset_name="codex-offline-packages-linux.tar.gz"
-    local download_url="https://github.com/${GITHUB_REPO}/releases/download/v${version}/${asset_name}"
+    local base_url="https://github.com/${GITHUB_REPO}/releases/download/v${version}"
+    local download_url="${base_url}/${asset_name}"
     local output_file="codex-offline-packages-v${version}.tar.gz"
 
     log_info "Downloading Codex v${version}..."
+    local download_ok=false
     if command -v wget >/dev/null 2>&1; then
-        wget --progress=bar:force --timeout=60 -O "$output_file" "$download_url" && return 0
+        wget --progress=bar:force --timeout=60 -O "$output_file" "$download_url" && download_ok=true
     elif command -v curl >/dev/null 2>&1; then
-        curl -fsSL --progress-bar --max-time 300 -o "$output_file" "$download_url"
+        curl -fsSL --progress-bar --max-time 300 -o "$output_file" "$download_url" && download_ok=true
     fi
-    [ -f "$output_file" ] && [ -s "$output_file" ] && { log_ok "Downloaded: $output_file"; echo "$output_file"; return 0; }
-    log_error "Download failed"
-    return 1
+
+    # Backward compatibility: releases before the platform-suffix rename
+    if [ "$download_ok" != true ]; then
+        asset_name="codex-offline-packages.tar.gz"
+        download_url="${base_url}/${asset_name}"
+        log_warn "Platform-suffixed asset not found, trying legacy name..."
+        if command -v wget >/dev/null 2>&1; then
+            wget --progress=bar:force --timeout=60 -O "$output_file" "$download_url" && download_ok=true
+        else
+            curl -fsSL --progress-bar --max-time 300 -o "$output_file" "$download_url" && download_ok=true
+        fi
+    fi
+
+    if [ "$download_ok" != true ]; then
+        log_error "Download failed (network unreachable or asset missing)"
+        return 1
+    fi
+
+    log_ok "Downloaded to: $output_file"
+
+    # Verify checksum if available
+    local checksum_url="${base_url}/${asset_name}.sha256"
+    local checksum_file="${output_file}.sha256"
+
+    if curl -fsSL --max-time 15 -o "$checksum_file" "$checksum_url" 2>/dev/null; then
+        log_info "Verifying checksum..."
+        if sha256sum -c "$checksum_file" 2>/dev/null; then
+            log_ok "Checksum verified"
+        else
+            log_warn "Checksum verification failed"
+        fi
+    fi
+
+    echo "$output_file"
 }
 
 check_updates() {
@@ -99,25 +153,32 @@ check_updates() {
     fi
 
     if [ -n "$npm_version" ] && [ "$npm_version" != "$current_version" ]; then
-        log_warn "New version available: v${npm_version} (current: v${current_version})"
-        echo ""
-        echo "Options:"
-        echo "  1) Download from GitHub Releases"
-        echo "  2) Skip"
-        echo ""
-        read -p "Select [1-2]: " -r choice
-        case $choice in
-            1) local f; f=$(download_latest "$npm_version")
-               if [ -n "$f" ]; then
-                   read -p "Install now? [Y/n]: " -n 1 -r
-                   echo
-                   if [[ ! $REPLY =~ ^[Nn]$ ]]; then
-                       tar -xzf "$f"
-                       bash codex-offline-packages/setup-codex.sh --offline-path codex-offline-packages
-                   fi
-               fi ;;
-            *) log_info "Skipped" ;;
-        esac
+        compare_versions "$npm_version" "$current_version"
+        local cmp_result=$?
+
+        if [ $cmp_result -eq 2 ]; then
+            log_warn "New version available: v${npm_version} (current: v${current_version})"
+            echo ""
+            echo "Options:"
+            echo "  1) Download from GitHub Releases"
+            echo "  2) Skip"
+            echo ""
+            read -p "Select [1-2]: " -r choice
+            case $choice in
+                1) local f; f=$(download_latest "$npm_version")
+                   if [ -n "$f" ]; then
+                       read -p "Install now? [Y/n]: " -n 1 -r
+                       echo
+                       if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+                           tar -xzf "$f"
+                           bash codex-offline-packages/setup-codex.sh --offline-path codex-offline-packages
+                       fi
+                   fi ;;
+                *) log_info "Skipped" ;;
+            esac
+        else
+            log_ok "You have the latest version (v${current_version})"
+        fi
     else
         log_ok "You have the latest version (v${current_version})"
     fi
