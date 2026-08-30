@@ -15,11 +15,13 @@
 - ✅ **双平台安装包**：Linux x64 (`tar.gz`) + Windows x64 (`zip`，原生 PowerShell 安装器）
 - ✅ **测试门禁**：每个包发布前都在干净环境（无 Node 的 ubuntu 容器 / Windows runner）中跑完整安装 + 启动验证，**测试不过不发版**
 - ✅ **无需 Node.js**：Codex 是独立原生二进制（Rust 编译），通过 shell 脚本直接调用，完全不需要 Node.js
-- ✅ **第三方 API 支持**：配置 `OPENAI_BASE_URL` 指向任意 OpenAI 兼容的 API 代理/网关
+- ✅ **第三方 API 支持**：官方 `config.toml` 格式，支持环境变量 / auth.json / 内联三种 Key 配置方式
 - ✅ **登录绕过**：自动跳过 onboarding，禁用遥测
 - ✅ **无人值守安装**：`--yes` / `--non-interactive` 模式，适合脚本和 CI
+- ✅ **精细化安装模式**：`--config-only`（仅更新配置）、`--skills-only`（仅装 skills）、`--force-download`（强制重下）
 - ✅ **离线 Skills/Plugins**：内置 15 个离线兼容 skills（文档处理、设计、测试等）
 - ✅ **完整卸载功能**：支持配置备份的彻底卸载
+- ✅ **历史版本保留**：Release 不再自动清理，可随时回退
 
 ---
 
@@ -72,31 +74,63 @@ nano ~/.codex/config.toml
 # Windows 用记事本打开 %USERPROFILE%\.codex\config.toml
 ```
 
-替换占位值：
+安装器已生成**官方 Codex CLI 格式**的 `config.toml`，默认使用 **Method A（环境变量）**：
 
 ```toml
-[api]
-base_url = "https://your-api-endpoint.com"
-api_key = "sk-your-api-key-here"
+#:schema https://developers.openai.com/codex/config-schema.json
 
-[telemetry]
-enabled = false
+model = "gpt-5"
+model_provider = "custom"
+approval_policy = "on-request"
+sandbox_mode = "workspace-write"
+cli_auth_credentials_store = "file"
+
+[model_providers.custom]
+name = "Custom API Provider"
+base_url = "https://your-api-endpoint.com/v1"
+wire_api = "responses"
+requires_openai_auth = false
+env_key = "OPENAI_API_KEY"
 ```
 
-或直接设置环境变量：
+### 三种 API Key 配置方式（选一种）
+
+#### Method A — 环境变量（推荐，密钥不落盘）
 
 ```bash
-export OPENAI_BASE_URL="https://your-api-endpoint.com"
+# Linux/macOS/WSL
 export OPENAI_API_KEY="sk-your-api-key-here"
+
+# Windows PowerShell
+$env:OPENAI_API_KEY = "sk-your-api-key-here"
 ```
 
-然后**打开新终端**（或 `source ~/.bashrc`)，验证：
+将上述命令加入 shell 配置文件（`~/.bashrc`、`~/.zshrc` 或 PowerShell `$PROFILE`）即可持久化。
+
+#### Method B — auth.json 文件存储
+
+1. 编辑 `~/.codex/auth.json`：
+   ```json
+   { "OPENAI_API_KEY": "sk-your-api-key-here" }
+   ```
+2. 修改 `config.toml`，将 `requires_openai_auth = false` 改为 `requires_openai_auth = true`，并注释掉 `env_key` 行。
+
+#### Method C — 内联配置（不推荐用于共享系统）
+
+直接在 `config.toml` 的 `[model_providers.custom]` 下添加：
+```toml
+experimental_bearer_token = "sk-your-api-key-here"
+```
+
+然后**打开新终端**（或 `source ~/.bashrc`），验证：
 
 ```bash
 codex --version
 ```
 
 > 💡 无法直连 OpenAI API 的地区，把 `base_url` 配置为你的代理/中转地址。支持所有 OpenAI API 兼容的接口（Azure、DeepSeek、Moonshot 等）。
+> 
+> ⚠️ `config.toml` 采用**官方 Codex CLI 配置格式**（`model_providers` + `wire_api`），旧版的 `[api]` section 已不再适用。如果之前用旧版安装过，建议先 `bash setup-codex.sh --config-only` 重新生成配置。
 
 ---
 
@@ -156,8 +190,11 @@ bash check-update.sh --install    # 下载并安装
 |------|------|
 | `--offline-path PATH` | 指定离线包路径 |
 | `--auto-download` | 自动从 GitHub Release 下载 |
+| `--force-download` | 强制重新下载（即使本地已有包） |
 | `--yes, -y` | 所有提示自动 yes（完全无人值守） |
 | `--non-interactive` | 非交互模式，自动采用默认答案 |
+| `--config-only` | 只生成/更新配置文件（不装二进制、不改 PATH） |
+| `--skills-only` | 只安装离线 skills |
 | `--uninstall` | 卸载 Codex 及配置 |
 | `--help, -h` | 帮助 |
 
@@ -168,6 +205,7 @@ bash check-update.sh --install    # 下载并安装
 | `-OfflinePath <path>` | 指定离线包路径 |
 | `-AutoDownload` | 自动从 GitHub Release 下载 |
 | `-NonInteractive` | 非交互模式 |
+| `-ConfigOnly` | 只生成/更新配置文件 |
 | `-Uninstall` | 卸载 Codex |
 
 ---
@@ -219,9 +257,13 @@ source ~/.bashrc   # 或打开新终端
 
 ### API 连接失败
 
-1. 检查 `~/.codex/config.toml` 中 `base_url` 和 `api_key` 是否正确
-2. 检查网络能否访问配置的 API 端点
-3. 确认是否需要代理
+1. 检查 `~/.codex/config.toml` 中 `base_url` 是否为正确的 OpenAI 兼容 API 端点
+2. 确认 `model_provider` 与 `[model_providers.xxx]` 表名一致
+3. 确认 API Key 已正确配置（三种方式之一：环境变量 / auth.json / experimental_bearer_token）
+4. 检查网络能否访问配置的 API 端点
+5. 确认是否需要代理
+
+> 如从旧版升级，建议先运行 `bash setup-codex.sh --config-only` 重新生成官方格式的配置文件。
 
 ### 无 Node.js 环境
 
